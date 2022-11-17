@@ -76,7 +76,7 @@
     "redux": "^4.1.1",
     "redux-promise-middleware": "5.0.0",
     "redux-thunk": "^2.3.0",
-    "sanitize-html": "^1.18.5",
+    "sanitize-html": "^2.3.2",
     "showdown": "^1.8.6",
     "stylis": "^4.0.10",
     "url": "^0.11.0",
