@@ -1,21 +1,25 @@
+function isMaintainer(author_association) {
+  return ["OWNER", "MEMBER", "COLLABORATOR"].includes(author_association);
+}
+
 async function main({ context, github }) {
   const { comment } = context.payload;
   const { owner, repo } = context.repo;
   const pull_number = context.issue.number;
 
-  const pr = await github.rest.pulls.get({ owner, repo, pull_number });
+  const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
   const flavorsMatch = comment.body.match(/\/(?:cross-version-test|cvt)\s+([^\n]+)\n?/);
   if (!flavorsMatch) {
     return;
   }
 
   // Reject non-maintainers
-  if (!["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association)) {
+  if (![pr.author_association, comment.author_association].every(isMaintainer)) {
     await github.rest.issues.createComment({
       owner,
       repo,
       issue_number: pull_number,
-      body: "Only maintainers are allowed to use this command.",
+      body: "Only maintainers can trigger cross-version tests on their PRs.",
     });
     return;
   }
@@ -30,7 +34,7 @@ async function main({ context, github }) {
     owner,
     repo,
     workflow_id,
-    ref: pr.data.base.ref,
+    ref: pr.base.ref,
     inputs: {
       repository: `${owner}/${repo}`,
       ref: pr.merge_commit_sha,

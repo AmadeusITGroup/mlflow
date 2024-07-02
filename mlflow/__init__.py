@@ -106,6 +106,14 @@ from mlflow.config import (
 from mlflow.exceptions import MlflowException
 from mlflow.models import evaluate
 from mlflow.projects import run
+from mlflow.tracing.fluent import (
+    get_current_active_span,
+    get_last_active_trace,
+    get_trace,
+    search_traces,
+    start_span,
+    trace,
+)
 from mlflow.tracking._model_registry.fluent import (
     register_model,
     search_model_versions,
@@ -175,6 +183,7 @@ __all__ = [
     "get_artifact_uri",
     "get_experiment",
     "get_experiment_by_name",
+    "get_last_active_trace",
     "get_parent_run",
     "get_registry_uri",
     "get_run",
@@ -214,6 +223,12 @@ __all__ = [
     "set_tracking_uri",
     "start_run",
     "Image",
+    # Tracing Fluent APIs
+    "get_current_active_span",
+    "get_trace",
+    "search_traces",
+    "start_span",
+    "trace",
 ]
 
 

@@ -15,6 +15,7 @@ import yaml
 import mlflow
 from mlflow.artifacts import download_artifacts
 from mlflow.exceptions import MlflowException
+from mlflow.models.resources import Resource, ResourceType, _ResourceBuilder
 from mlflow.protos.databricks_pb2 import INVALID_PARAMETER_VALUE, RESOURCE_DOES_NOT_EXIST
 from mlflow.store.artifact.models_artifact_repo import ModelsArtifactRepository
 from mlflow.store.artifact.runs_artifact_repo import RunsArtifactRepository
@@ -22,7 +23,7 @@ from mlflow.tracking._model_registry import DEFAULT_AWAIT_MAX_SLEEP_SECONDS
 from mlflow.tracking._tracking_service.utils import _resolve_tracking_uri
 from mlflow.tracking.artifact_utils import _download_artifact_from_uri, _upload_artifact_to_uri
 from mlflow.utils.annotations import experimental
-from mlflow.utils.databricks_utils import get_databricks_runtime_version
+from mlflow.utils.databricks_utils import get_databricks_runtime_version, is_in_databricks_runtime
 from mlflow.utils.docstring_utils import LOG_MODEL_PARAM_DOCS, format_docstring
 from mlflow.utils.environment import (
     _CONDA_ENV_FILE_NAME,
@@ -64,6 +65,8 @@ METADATA_FILES = [
     _REQUIREMENTS_FILE_NAME,
     _PYTHON_ENV_FILE_NAME,
 ]
+MODEL_CONFIG = "config"
+MODEL_CODE_PATH = "model_code_path"
 
 
 class ModelInfo:
@@ -84,6 +87,7 @@ class ModelInfo:
         mlflow_version: str,
         signature_dict: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        registered_model_version: Optional[int] = None,
     ):
         self._artifact_path = artifact_path
         self._flavors = flavors
@@ -96,6 +100,7 @@ class ModelInfo:
         self._utc_time_created = utc_time_created
         self._mlflow_version = mlflow_version
         self._metadata = metadata
+        self._registered_model_version = registered_model_version
 
     @property
     def artifact_path(self):
@@ -273,6 +278,21 @@ class ModelInfo:
         """
         return self._metadata
 
+    @property
+    def registered_model_version(self) -> Optional[int]:
+        """
+        The registered model version, if the model is registered.
+
+        :getter: Gets the registered model version, if the model is registered in Model Registry.
+        :setter: Sets the registered model version.
+        :type: Optional[int]
+        """
+        return self._registered_model_version
+
+    @registered_model_version.setter
+    def registered_model_version(self, value):
+        self._registered_model_version = value
+
 
 class Model:
     """
@@ -292,6 +312,7 @@ class Model:
         mlflow_version: Union[str, None] = mlflow.version.VERSION,
         metadata: Optional[Dict[str, Any]] = None,
         model_size_bytes: Optional[int] = None,
+        resources: Optional[Union[str, List[Resource]]] = None,
         **kwargs,
     ):
         # store model id instead of run_id and path to avoid confusion when model gets exported
@@ -305,6 +326,7 @@ class Model:
         self.mlflow_version = mlflow_version
         self.metadata = metadata
         self.model_size_bytes = model_size_bytes
+        self.resources = resources
         self.__dict__.update(kwargs)
 
     def __eq__(self, other):
@@ -469,6 +491,29 @@ class Model:
     def model_size_bytes(self, value: Optional[int]):
         self._model_size_bytes = value
 
+    @experimental
+    @property
+    def resources(self) -> Dict[str, Dict[ResourceType, List[Dict]]]:
+        """
+        An optional dictionary that contains the resources required to serve the model.
+
+        :getter: Retrieves the resources required to serve the model
+        :setter: Sets the resources required to serve the model
+        :type: Dict[str, Dict[ResourceType, List[Dict]]]
+        """
+        return self._resources
+
+    @experimental
+    @resources.setter
+    def resources(self, value: Optional[Union[str, List[Resource]]]):
+        if isinstance(value, (Path, str)):
+            serialized_resource = _ResourceBuilder.from_yaml_file(value)
+        elif isinstance(value, List) and all(isinstance(resource, Resource) for resource in value):
+            serialized_resource = _ResourceBuilder.from_resources(value)
+        else:
+            serialized_resource = value
+        self._resources = serialized_resource
+
     def get_model_info(self):
         """
         Create a :py:class:`ModelInfo <mlflow.models.model.ModelInfo>` instance that contains the
@@ -502,6 +547,8 @@ class Model:
             res.pop(_MLFLOW_VERSION_KEY)
         if self.metadata is not None:
             res["metadata"] = self.metadata
+        if self.resources is not None:
+            res["resources"] = self.resources
         if self.model_size_bytes is not None:
             res["model_size_bytes"] = self.model_size_bytes
         # Exclude null fields in case MLmodel file consumers such as Model Serving may not
@@ -594,6 +641,7 @@ class Model:
         await_registration_for=DEFAULT_AWAIT_MAX_SLEEP_SECONDS,
         metadata=None,
         run_id=None,
+        resources=None,
         **kwargs,
     ):
         """
@@ -615,42 +663,31 @@ class Model:
                 function waits for five minutes. Specify 0 or None to skip
                 waiting.
             metadata: {{ metadata }}
+            resources: {{ resources }}
             kwargs: Extra args passed to the model flavor.
 
         Returns:
             A :py:class:`ModelInfo <mlflow.models.model.ModelInfo>` instance that contains the
             metadata of the logged model.
         """
-        from mlflow.models.wheeled_model import _ORIGINAL_REQ_FILE_NAME, WheeledModel
+        from mlflow.utils.model_utils import _validate_and_get_model_config_from_file
 
+        registered_model = None
         with TempDir() as tmp:
             local_path = tmp.path("model")
             if run_id is None:
                 run_id = mlflow.tracking.fluent._get_or_start_run().info.run_id
-            mlflow_model = cls(artifact_path=artifact_path, run_id=run_id, metadata=metadata)
+            mlflow_model = cls(
+                artifact_path=artifact_path, run_id=run_id, metadata=metadata, resources=resources
+            )
             flavor.save_model(path=local_path, mlflow_model=mlflow_model, **kwargs)
+            # `save_model` calls `load_model` to infer the model requirements, which may result in
+            # __pycache__ directories being created in the model directory.
+            for pycache in Path(local_path).rglob("__pycache__"):
+                shutil.rmtree(pycache, ignore_errors=True)
 
-            # Copy model metadata files to a sub-directory 'metadata',
-            # For UC sharing use-cases.
-            metadata_path = os.path.join(local_path, "metadata")
-            if isinstance(flavor, WheeledModel):
-                # wheeled model updates several metadata files in original model directory
-                # copy these updated metadata files to the 'metadata' subdirectory
-                os.makedirs(metadata_path, exist_ok=True)
-                for file_name in METADATA_FILES + [
-                    _ORIGINAL_REQ_FILE_NAME,
-                ]:
-                    src_file_path = os.path.join(local_path, file_name)
-                    if os.path.exists(src_file_path):
-                        dest_file_path = os.path.join(metadata_path, file_name)
-                        shutil.copyfile(src_file_path, dest_file_path)
-            else:
-                os.makedirs(metadata_path, exist_ok=True)
-                for file_name in METADATA_FILES:
-                    src_file_path = os.path.join(local_path, file_name)
-                    if os.path.exists(src_file_path):
-                        dest_file_path = os.path.join(metadata_path, file_name)
-                        shutil.copyfile(src_file_path, dest_file_path)
+            if is_in_databricks_runtime():
+                _copy_model_metadata_for_uc_sharing(local_path, flavor)
 
             tracking_uri = _resolve_tracking_uri()
             # We check signature presence here as some flavors have a default signature as a
@@ -660,6 +697,41 @@ class Model:
             ):
                 _logger.warning(_LOG_MODEL_MISSING_SIGNATURE_WARNING)
             mlflow.tracking.fluent.log_artifacts(local_path, mlflow_model.artifact_path, run_id)
+
+            # if the model_config kwarg is passed in, then log the model config as an params
+            if model_config := kwargs.get("model_config"):
+                if isinstance(model_config, str):
+                    try:
+                        file_extension = os.path.splitext(model_config)[1].lower()
+                        if file_extension == ".json":
+                            with open(model_config) as f:
+                                model_config = json.load(f)
+                        elif file_extension in [".yaml", ".yml"]:
+                            model_config = _validate_and_get_model_config_from_file(model_config)
+                        else:
+                            _logger.warning(
+                                "Unsupported file format for model config: %s. "
+                                "Failed to load model config.",
+                                model_config,
+                            )
+                    except Exception as e:
+                        _logger.warning("Failed to load model config from %s: %s", model_config, e)
+
+                try:
+                    from mlflow.models.utils import _flatten_nested_params
+
+                    # We are using the `/` separator to flatten the nested params
+                    # since we are using the same separator to log nested metrics.
+                    params_to_log = _flatten_nested_params(model_config, sep="/")
+                except Exception as e:
+                    _logger.warning("Failed to flatten nested params: %s", str(e))
+                    params_to_log = model_config
+
+                try:
+                    mlflow.tracking.fluent.log_params(params_to_log or {}, run_id=run_id)
+                except Exception as e:
+                    _logger.warning("Failed to log model config as params: %s", str(e))
+
             try:
                 mlflow.tracking.fluent._record_logged_model(mlflow_model, run_id)
             except MlflowException:
@@ -667,14 +739,50 @@ class Model:
                 # older tracking servers. Only print out a warning for now.
                 _logger.warning(_LOG_MODEL_METADATA_WARNING_TEMPLATE, mlflow.get_artifact_uri())
                 _logger.debug("", exc_info=True)
+
             if registered_model_name is not None:
-                mlflow.tracking._model_registry.fluent._register_model(
+                registered_model = mlflow.tracking._model_registry.fluent._register_model(
                     f"runs:/{run_id}/{mlflow_model.artifact_path}",
                     registered_model_name,
                     await_registration_for=await_registration_for,
                     local_model_path=local_path,
                 )
-        return mlflow_model.get_model_info()
+        model_info = mlflow_model.get_model_info()
+        if registered_model is not None:
+            model_info.registered_model_version = registered_model.version
+        return model_info
+
+
+def _copy_model_metadata_for_uc_sharing(local_path, flavor):
+    """
+    Copy model metadata files to a sub-directory 'metadata',
+    For Databricks Unity Catalog sharing use-cases.
+
+    Args:
+        local_path: Local path to the model directory.
+        flavor: Flavor module to save the model with.
+    """
+    from mlflow.models.wheeled_model import _ORIGINAL_REQ_FILE_NAME, WheeledModel
+
+    metadata_path = os.path.join(local_path, "metadata")
+    if isinstance(flavor, WheeledModel):
+        # wheeled model updates several metadata files in original model directory
+        # copy these updated metadata files to the 'metadata' subdirectory
+        os.makedirs(metadata_path, exist_ok=True)
+        for file_name in METADATA_FILES + [
+            _ORIGINAL_REQ_FILE_NAME,
+        ]:
+            src_file_path = os.path.join(local_path, file_name)
+            if os.path.exists(src_file_path):
+                dest_file_path = os.path.join(metadata_path, file_name)
+                shutil.copyfile(src_file_path, dest_file_path)
+    else:
+        os.makedirs(metadata_path, exist_ok=True)
+        for file_name in METADATA_FILES:
+            src_file_path = os.path.join(local_path, file_name)
+            if os.path.exists(src_file_path):
+                dest_file_path = os.path.join(metadata_path, file_name)
+                shutil.copyfile(src_file_path, dest_file_path)
 
 
 def get_model_info(model_uri: str) -> ModelInfo:
@@ -850,6 +958,7 @@ def update_model_requirements(
 __mlflow_model__ = None
 
 
+@experimental
 def set_model(model):
     """
     When logging model as code, this function can be used to set the model object
@@ -860,12 +969,17 @@ def set_model(model):
     """
     from mlflow.pyfunc import PythonModel
 
-    if not isinstance(model, PythonModel):
+    if not (isinstance(model, PythonModel) or callable(model)):
         try:
-            from mlflow.langchain import _validate_and_wrap_lc_model
+            from mlflow.langchain import _validate_and_prepare_lc_model_or_path
 
-            # If its not a PyFuncModel, then it should be a Langchain model
-            _validate_and_wrap_lc_model(model, None)
+            # If its not a PyFuncModel, then it should be a Langchain model (not a path)
+            # Check this since the validation function does not
+            if isinstance(model, str):
+                raise mlflow.MlflowException(
+                    "Model should either be an instance of PyFuncModel or Langchain type."
+                )
+            model = _validate_and_prepare_lc_model_or_path(model, None)
         except Exception as e:
             raise mlflow.MlflowException(
                 "Model should either be an instance of PyFuncModel or Langchain type."

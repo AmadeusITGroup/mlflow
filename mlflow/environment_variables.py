@@ -505,6 +505,12 @@ MLFLOW_MULTIPART_UPLOAD_MINIMUM_FILE_SIZE = _EnvironmentVariable(
     "MLFLOW_MULTIPART_UPLOAD_MINIMUM_FILE_SIZE", int, 500 * 1024**2
 )
 
+#: Specifies the minimum file size in bytes to use multipart download when downloading artifacts
+#: (default: ``524_288_000`` (500 MB))
+MLFLOW_MULTIPART_DOWNLOAD_MINIMUM_FILE_SIZE = _EnvironmentVariable(
+    "MLFLOW_MULTIPART_DOWNLOAD_MINIMUM_FILE_SIZE", int, 500 * 1024**2
+)
+
 #: Specifies the chunk size in bytes to use when performing multipart upload
 #: (default: ``104_857_60`` (10 MB))
 MLFLOW_MULTIPART_UPLOAD_CHUNK_SIZE = _EnvironmentVariable(
@@ -562,7 +568,72 @@ _MLFLOW_RUN_SLOW_TESTS = _BooleanEnvironmentVariable("MLFLOW_RUN_SLOW_TESTS", Fa
 #: (default: ``11``)
 MLFLOW_DOCKER_OPENJDK_VERSION = _EnvironmentVariable("MLFLOW_DOCKER_OPENJDK_VERSION", str, "11")
 
-# Whether to use presigned URLs to interact with the Unity Catalog
-MLFLOW_UNITY_CATALOG_PRESIGNED_URLS_ENABLED = _BooleanEnvironmentVariable(
-    "MLFLOW_UNITY_CATALOG_PRESIGNED_URLS_ENABLED", False
+# How many traces to be buffered at the Trace Client.
+MLFLOW_TRACING_CLIENT_BUFFER_SIZE = _EnvironmentVariable(
+    "MLFLOW_TRACING_CLIENT_BUFFER_SIZE", int, 1000
 )
+
+# How long a trace can be buffered at the in-memory trace client before being abandoned.
+MLFLOW_TRACE_BUFFER_TTL_SECONDS = _EnvironmentVariable("MLFLOW_TRACE_BUFFER_TTL_SECONDS", int, 3600)
+
+# How many traces to be buffered at the in-memory trace client.
+MLFLOW_TRACE_BUFFER_MAX_SIZE = _EnvironmentVariable("MLFLOW_TRACE_BUFFER_MAX_SIZE", int, 1000)
+
+#: Private configuration option.
+#: Enables the ability to catch exceptions within MLflow evaluate for classification models
+#: where a class imbalance due to a missing target class would raise an error in the
+#: underlying metrology modules (scikit-learn). If set to True, specific exceptions will be
+#: caught, alerted via the warnings module, and evaluation will resume.
+#: (default: ``False``)
+_MLFLOW_EVALUATE_SUPPRESS_CLASSIFICATION_ERRORS = _BooleanEnvironmentVariable(
+    "_MLFLOW_EVALUATE_SUPPRESS_CLASSIFICATION_ERRORS", False
+)
+
+#: Whether to warn (default) or raise (opt-in) for unresolvable requirements inference for
+#: a model's dependency inference. If set to True, an exception will be raised if requirements
+#: inference or the process of capturing imported modules encounters any errors.
+MLFLOW_REQUIREMENTS_INFERENCE_RAISE_ERRORS = _BooleanEnvironmentVariable(
+    "MLFLOW_REQUIREMENTS_INFERENCE_RAISE_ERRORS", False
+)
+
+# How many traces to display in Databricks Notebooks
+MLFLOW_MAX_TRACES_TO_DISPLAY_IN_NOTEBOOK = _EnvironmentVariable(
+    "MLFLOW_MAX_TRACES_TO_DISPLAY_IN_NOTEBOOK", int, 10
+)
+
+# Default addressing style to use for boto client
+MLFLOW_BOTO_CLIENT_ADDRESSING_STYLE = _EnvironmentVariable(
+    "MLFLOW_BOTO_CLIENT_ADDRESSING_STYLE", str, "auto"
+)
+
+#: Specify the timeout in seconds for Databricks endpoint HTTP request retries.
+MLFLOW_DATABRICKS_ENDPOINT_HTTP_RETRY_TIMEOUT = _EnvironmentVariable(
+    "MLFLOW_DATABRICKS_ENDPOINT_HTTP_RETRY_TIMEOUT", int, 500
+)
+
+#: Specifies the number of connection pools to cache in urllib3. This environment variable sets the
+#: `pool_connections` parameter in the `requests.adapters.HTTPAdapter` constructor. By adjusting
+#: this variable, users can enhance the concurrency of HTTP requests made by MLflow.
+MLFLOW_HTTP_POOL_CONNECTIONS = _EnvironmentVariable("MLFLOW_HTTP_POOL_CONNECTIONS", int, 10)
+
+#: Specifies the maximum number of connections to keep in the HTTP connection pool. This environment
+#: variable sets the `pool_maxsize` parameter in the `requests.adapters.HTTPAdapter` constructor.
+#: By adjusting this variable, users can enhance the concurrency of HTTP requests made by MLflow.
+MLFLOW_HTTP_POOL_MAXSIZE = _EnvironmentVariable("MLFLOW_HTTP_POOL_MAXSIZE", int, 10)
+
+#: Enable Unity Catalog integration for mlflow deployments server.
+#: (default: ``False``)
+MLFLOW_ENABLE_UC_FUNCTIONS = _BooleanEnvironmentVariable("MLFLOW_ENABLE_UC_FUNCTIONS", False)
+
+#: Specifies the length of time in seconds for the asynchronous logging thread to wait before
+#: logging a batch.
+MLFLOW_ASYNC_LOGGING_BUFFERING_SECONDS = _EnvironmentVariable(
+    "MLFLOW_ASYNC_LOGGING_BUFFERING_SECONDS", int, None
+)
+
+#: Whether to enable Databricks SDK. If true, MLflow uses databricks-sdk to send HTTP requests
+#: to Databricks endpoint, otherwise MLflow uses ``requests`` library to send HTTP requests
+#: to Databricks endpoint. Note that if you want to use OAuth authentication, you have to
+#: set this environment variable to true.
+#: (default: ``True``)
+MLFLOW_ENABLE_DB_SDK = _BooleanEnvironmentVariable("MLFLOW_ENABLE_DB_SDK", True)

@@ -10,6 +10,7 @@ MLFLOW_EXPERIMENT_SOURCE_TYPE = "mlflow.experiment.sourceType"
 MLFLOW_RUN_NAME = "mlflow.runName"
 MLFLOW_RUN_NOTE = "mlflow.note.content"
 MLFLOW_PARENT_RUN_ID = "mlflow.parentRunId"
+MLFLOW_ARTIFACT_LOCATION = "mlflow.artifactLocation"
 MLFLOW_USER = "mlflow.user"
 MLFLOW_SOURCE_TYPE = "mlflow.source.type"
 MLFLOW_RECIPE_TEMPLATE_NAME = "mlflow.pipeline.template.name"
@@ -77,6 +78,22 @@ MLFLOW_EXPERIMENT_PRIMARY_METRIC_GREATER_IS_BETTER = (
 
 # For automatic model checkpointing
 LATEST_CHECKPOINT_ARTIFACT_TAG_KEY = "mlflow.latest_checkpoint_artifact"
+
+# A set of tags that cannot be updated by the user
+IMMUTABLE_TAGS = {MLFLOW_USER, MLFLOW_ARTIFACT_LOCATION}
+
+# The list of tags generated from resolve_tags() that are required for tracing UI
+TRACE_RESOLVE_TAGS_ALLOWLIST = (
+    MLFLOW_DATABRICKS_NOTEBOOK_COMMAND_ID,
+    MLFLOW_DATABRICKS_NOTEBOOK_ID,
+    MLFLOW_DATABRICKS_NOTEBOOK_PATH,
+    MLFLOW_DATABRICKS_WEBAPP_URL,
+    MLFLOW_DATABRICKS_WORKSPACE_ID,
+    MLFLOW_DATABRICKS_WORKSPACE_URL,
+    MLFLOW_SOURCE_NAME,
+    MLFLOW_SOURCE_TYPE,
+    MLFLOW_USER,
+)
 
 
 def _get_run_name_from_tags(tags):

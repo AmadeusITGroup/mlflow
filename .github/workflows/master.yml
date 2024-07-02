@@ -81,6 +81,7 @@ jobs:
           python -m venv .venv
           source .venv/bin/activate
           source ./dev/install-common-deps.sh --ml
+      - uses: ./.github/actions/show-versions
       - uses: ./.github/actions/pipdeptree
       - name: Import check
         run: |
@@ -157,6 +158,7 @@ jobs:
       - name: Install dependencies
         run: |
           source ./dev/install-common-deps.sh
+      - uses: ./.github/actions/show-versions
       - uses: ./.github/actions/pipdeptree
       - name: Run tests
         run: |
@@ -181,6 +183,7 @@ jobs:
           python -m venv .venv
           source .venv/bin/activate
           source ./dev/install-common-deps.sh --ml
+      - uses: ./.github/actions/show-versions
       - uses: ./.github/actions/pipdeptree
       - name: Run tests
         run: |
@@ -215,7 +218,8 @@ jobs:
       - name: Install dependencies
         run: |
           source ./dev/install-common-deps.sh
-          pip install pyspark langchain
+          pip install pyspark langchain langchain-community
+      - uses: ./.github/actions/show-versions
       - uses: ./.github/actions/pipdeptree
       - name: Run tests
         run: |
@@ -240,7 +244,8 @@ jobs:
       - name: Install dependencies
         run: |
           source ./dev/install-common-deps.sh
-          pip install pyspark torch transformers
+          pip install pyspark torch transformers langchain langchain-experimental
+      - uses: ./.github/actions/show-versions
       - uses: ./.github/actions/pipdeptree
       - name: Run tests
         run: |
@@ -273,11 +278,12 @@ jobs:
           source ./dev/install-common-deps.sh
           pip install tensorflow 'pyspark[connect]'
           pip install typing_extensions -U
+      - uses: ./.github/actions/show-versions
       - uses: ./.github/actions/pipdeptree
       - name: Run tests
         run: |
           pytest --splits=${{ matrix.splits }} --group=${{ matrix.group }} --durations=30 \
-            tests/pyfunc --ignore tests/pyfunc/test_spark_connect.py \
+            tests/pyfunc --ignore tests/pyfunc/test_spark_connect.py
 
           # test_spark_connect.py fails if it's run with other tests, so run it separately.
           pytest tests/pyfunc/test_spark_connect.py
@@ -296,6 +302,7 @@ jobs:
       - name: Install dependencies
         run: |
           source ./dev/install-common-deps.sh --ml
+      - uses: ./.github/actions/show-versions
       - uses: ./.github/actions/pipdeptree
       - name: Run tests
         run: |
@@ -336,6 +343,7 @@ jobs:
           # Install torch and transformers to test metrics
           pip install torch transformers
           pip install -r requirements/test-requirements.txt
+      - uses: ./.github/actions/show-versions
       - uses: ./.github/actions/pipdeptree
       - name: Download Hadoop winutils for Spark
         run: |

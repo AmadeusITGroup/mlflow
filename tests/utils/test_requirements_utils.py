@@ -9,6 +9,7 @@ import pytest
 
 import mlflow
 import mlflow.utils.requirements_utils
+from mlflow.exceptions import MlflowException
 from mlflow.utils.environment import infer_pip_requirements
 from mlflow.utils.os import is_windows
 from mlflow.utils.requirements_utils import (
@@ -316,6 +317,19 @@ def test_infer_requirements_does_not_print_warning_for_recognized_packages():
         mock_warning.assert_not_called()
 
 
+def test_infer_requirements_raises_when_env_var_set(monkeypatch):
+    monkeypatch.setenv("MLFLOW_REQUIREMENTS_INFERENCE_RAISE_ERRORS", "True")
+
+    with mock.patch(
+        "mlflow.utils.requirements_utils._capture_imported_modules",
+        return_value=["sklearn"],
+    ), mock.patch(
+        "mlflow.utils.requirements_utils._PYPI_PACKAGE_INDEX",
+        _PyPIPackageIndex(date="2022-01-01", package_names=set()),
+    ), pytest.raises(MlflowException, match="Failed to infer requirements for the model"):
+        _infer_requirements("path/to/model", "sklearn")
+
+
 def test_capture_imported_modules_scopes_databricks_imports(monkeypatch, tmp_path):
     from mlflow.utils._capture_modules import _CaptureImportedModules
 
@@ -414,10 +428,22 @@ def test_capture_imported_modules_include_deps_by_params():
     assert "sklearn" in captured_modules
 
 
-def test_capture_imported_modules_includes_gateway_extra():
+@pytest.mark.parametrize(
+    ("module_to_import", "should_capture_extra"),
+    [
+        ("mlflow.gateway", True),
+        ("mlflow.deployments.server.config", True),
+        # The `mlflow[gateway]`` extra includes requirements for starting the deployment server,
+        # but it is not required when the model only uses the deployment client. These test
+        # cases validate that importing the deployment client alone does not add the extra.
+        ("mlflow.deployments", False),
+        ("mlflow.deployments.get_deploy_client", False),
+    ],
+)
+def test_capture_imported_modules_includes_gateway_extra(module_to_import, should_capture_extra):
     class MyModel(mlflow.pyfunc.PythonModel):
         def predict(self, _, inputs, params=None):
-            import mlflow.gateway  # noqa: F401
+            importlib.import_module(module_to_import)
 
             return inputs
 
@@ -429,10 +455,10 @@ def test_capture_imported_modules_includes_gateway_extra():
         )
 
     captured_modules = _capture_imported_modules(model_info.model_uri, "pyfunc")
-    assert "mlflow.gateway" in captured_modules
+    assert ("mlflow.gateway" in captured_modules) == should_capture_extra
 
     pip_requirements = infer_pip_requirements(model_info.model_uri, "pyfunc")
-    assert f"mlflow[gateway]=={mlflow.__version__}" in pip_requirements
+    assert (f"mlflow[gateway]=={mlflow.__version__}" in pip_requirements) == should_capture_extra
 
 
 def test_warn_dependency_requirement_mismatches():
@@ -541,7 +567,16 @@ model's environment and install dependencies using the resulting environment fil
         mock_warning.assert_not_called()
 
 
-def test_suppress_warn_dependency_requirement_mismatches_feature_store(tmp_path):
+@pytest.mark.parametrize(
+    "ignore_package_name",
+    [
+        "databricks-feature-lookup",
+        "databricks-agents",
+        "databricks_agents",
+        "databricks.agents",
+    ],
+)
+def test_suppress_warn_dependency_requirement_mismatches_ignore_some_packages(ignore_package_name):
     with mock.patch("mlflow.utils.requirements_utils._logger.warning") as mock_warning:
         original_get_installed_version_fn = mlflow.utils.requirements_utils._get_installed_version
 
@@ -559,7 +594,7 @@ def test_suppress_warn_dependency_requirement_mismatches_feature_store(tmp_path)
             "mlflow.utils.requirements_utils._get_installed_version",
             gen_mock_get_installed_version_fn(
                 {
-                    "databricks-feature-lookup": "9.99.11",
+                    ignore_package_name: "9.99.11",
                     "cloudpickle": "999.99.22",
                 }
             ),
@@ -567,7 +602,7 @@ def test_suppress_warn_dependency_requirement_mismatches_feature_store(tmp_path)
             warn_dependency_requirement_mismatches(
                 model_requirements=[
                     f"cloudpickle=={cloudpickle.__version__}",
-                    "databricks-feature-lookup==999.1.1",
+                    f"{ignore_package_name}==999.1.1",
                 ]
             )
             mock_warning.assert_called_once_with(
@@ -603,6 +638,25 @@ def test_capture_imported_modules_with_exception():
             "introduced in predict are not captured.\n" in mock_warning.call_args[0][0]
         )
         assert "sklearn" not in modules
+
+
+def test_capture_imported_modules_raises_when_env_var_set(monkeypatch):
+    monkeypatch.setenv("MLFLOW_REQUIREMENTS_INFERENCE_RAISE_ERRORS", "True")
+
+    class BadModel(mlflow.pyfunc.PythonModel):
+        def predict(self, context, model_input, params=None):
+            raise Exception("Intentional")
+
+    with mlflow.start_run():
+        model_info = mlflow.pyfunc.log_model(
+            "model",
+            python_model=BadModel(),
+            input_example="test",
+        )
+    with pytest.raises(
+        MlflowException, match="Encountered an error while capturing imported modules"
+    ):
+        _capture_imported_modules(model_info.model_uri, mlflow.pyfunc.FLAVOR_NAME)
 
 
 def test_capture_imported_modules_correct():

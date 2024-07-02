@@ -27,7 +27,7 @@ jobs:
   build:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       actions: write # deleteArtifact
     strategy:
@@ -49,11 +49,6 @@ jobs:
           yarn
           yarn build
 
-      - name: Check dependencies consistency
-        run: |
-          pip install pyyaml
-          ./dev/validate-requirements-consistency.sh
-
       - name: Install dependencies
         run: |
           pip install build twine
@@ -62,9 +57,9 @@ jobs:
         id: build-dist
         run: |
           if [ "${{ matrix.type }}" == "skinny" ]; then
-            ./dev/build.sh --skinny
+            python dev/build.py --package-type skinny
           else
-            ./dev/build.sh
+            python dev/build.py
           fi
 
           # List distribution files and check their file sizes
@@ -122,7 +117,6 @@ jobs:
         env:
           WHEEL_SIZE: ${{ steps.build-dist.outputs.wheel-size }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
 

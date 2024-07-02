@@ -12,6 +12,7 @@ from mlflow.metrics.genai.genai_metric import (
     _extract_score_and_justification,
     _format_args_string,
     make_genai_metric,
+    make_genai_metric_from_prompt,
 )
 from mlflow.metrics.genai.metric_definitions import (
     answer_correctness,
@@ -27,6 +28,8 @@ from mlflow.metrics.genai.prompts.v1 import (
     FaithfulnessMetric,
     RelevanceMetric,
 )
+from mlflow.metrics.genai.utils import _get_default_model
+from mlflow.version import VERSION
 
 openai_justification1 = (
     "The provided output mostly answers the question, but it is missing or hallucinating on "
@@ -1034,3 +1037,169 @@ def test_make_genai_metric_without_example():
         greater_is_better=True,
         aggregations=["mean", "variance", "p90"],
     )
+
+
+def test_make_genai_metric_metric_metadata():
+    expected_metric_metadata = {"metadata_field": "metadata_value"}
+
+    custom_metric = make_genai_metric(
+        name="correctness",
+        version="v1",
+        definition=example_definition,
+        grading_prompt=example_grading_prompt,
+        examples=[mlflow_example],
+        model="gateway:/gpt-3.5-turbo",
+        grading_context_columns=["targets"],
+        parameters={"temperature": 0.0},
+        greater_is_better=True,
+        aggregations=["mean", "variance", "p90"],
+        metric_metadata=expected_metric_metadata,
+    )
+
+    assert custom_metric.metric_metadata == expected_metric_metadata
+
+    assert custom_metric.__str__() == (
+        f"EvaluationMetric(name=correctness, greater_is_better=True, long_name=correctness, "
+        f"version=v1, metric_details={custom_metric.metric_details}, "
+        f"metric_metadata={expected_metric_metadata})"
+    )
+
+
+def test_make_custom_judge_prompt_genai_metric():
+    custom_judge_prompt = "This is a custom judge prompt that uses {input} and {output}"
+
+    custom_judge_prompt_metric = make_genai_metric_from_prompt(
+        name="custom",
+        judge_prompt=custom_judge_prompt,
+        metric_metadata={"metadata_field": "metadata_value"},
+    )
+
+    inputs = ["What is MLflow?", "What is Spark?"]
+    outputs = [
+        "MLflow is an open-source platform",
+        "Apache Spark is an open-source distributed framework",
+    ]
+
+    with mock.patch.object(
+        model_utils,
+        "score_model_on_payload",
+        return_value=properly_formatted_openai_response1,
+    ) as mock_predict_function:
+        metric_value = custom_judge_prompt_metric.eval_fn(
+            input=pd.Series(inputs),
+            output=pd.Series(outputs),
+        )
+        assert mock_predict_function.call_count == 2
+        assert mock_predict_function.call_args_list[0][0][1] == (
+            "This is a custom judge prompt that uses What is MLflow? and "
+            "MLflow is an open-source platform"
+            "\n\nYou must return the following fields in your response in two "
+            "lines, one below the other:"
+            "\nscore: Your numerical score based on the rubric"
+            "\njustification: Your reasoning for giving this score"
+            "\n\nDo not add additional new lines. Do not add any other fields."
+        )
+        assert mock_predict_function.call_args_list[1][0][1] == (
+            "This is a custom judge prompt that uses What is Spark? and "
+            "Apache Spark is an open-source distributed framework"
+            "\n\nYou must return the following fields in your response in two "
+            "lines, one below the other:"
+            "\nscore: Your numerical score based on the rubric"
+            "\njustification: Your reasoning for giving this score"
+            "\n\nDo not add additional new lines. Do not add any other fields."
+        )
+
+    assert metric_value.scores == [3, 3]
+    assert metric_value.justifications == [openai_justification1, openai_justification1]
+
+    assert metric_value.aggregate_results == {
+        "mean": 3,
+        "variance": 0,
+        "p90": 3,
+    }
+
+
+def test_make_custom_prompt_genai_metric_validates_input_kwargs():
+    custom_judge_prompt = "This is a custom judge prompt that uses {input} and {output}"
+
+    custom_judge_prompt_metric = make_genai_metric_from_prompt(
+        name="custom",
+        judge_prompt=custom_judge_prompt,
+    )
+
+    inputs = ["What is MLflow?"]
+    with pytest.raises(MlflowException, match="Missing variable inputs to eval_fn"):
+        custom_judge_prompt_metric.eval_fn(
+            input=pd.Series(inputs),
+        )
+
+
+def test_log_make_genai_metric_from_prompt_fn_args():
+    custom_judge_prompt = "This is a custom judge prompt that uses {input} and {output}"
+
+    custom_metric = make_genai_metric_from_prompt(
+        name="custom",
+        judge_prompt=custom_judge_prompt,
+        greater_is_better=False,
+        parameters={"temperature": 0.0},
+    )
+
+    expected_keys = set(inspect.signature(make_genai_metric_from_prompt).parameters.keys())
+    expected_keys.add("mlflow_version")
+    # When updating the function signature of make_genai_metric_from_prompt, please update
+    # the genai_metric_args dict construction inside the function as well.
+    assert set(custom_metric.genai_metric_args.keys()) == expected_keys
+
+    expected_genai_metric_args = {
+        "name": "custom",
+        "judge_prompt": custom_judge_prompt,
+        "model": _get_default_model(),
+        "parameters": {"temperature": 0.0},
+        "aggregations": None,
+        "greater_is_better": False,
+        "max_workers": 10,
+        "metric_metadata": None,
+        "mlflow_version": VERSION,
+    }
+
+    assert custom_metric.genai_metric_args == expected_genai_metric_args
+
+
+def test_log_make_genai_metric_fn_args():
+    custom_metric = make_genai_metric(
+        name="correctness",
+        version="v1",
+        definition=example_definition,
+        grading_prompt=example_grading_prompt,
+        examples=[mlflow_example],
+        model="gateway:/gpt-3.5-turbo",
+        grading_context_columns=["targets"],
+        parameters={"temperature": 0.0},
+        greater_is_better=True,
+        aggregations=["mean", "variance", "p90"],
+    )
+
+    expected_keys = set(inspect.signature(make_genai_metric).parameters.keys())
+    expected_keys.add("mlflow_version")
+    # When updating the function signature of make_genai_metric, please update
+    # the genai_metric_args dict construction inside the function as well.
+    assert set(custom_metric.genai_metric_args.keys()) == expected_keys
+
+    expected_genai_metric_args = {
+        "name": "correctness",
+        "definition": example_definition,
+        "grading_prompt": example_grading_prompt,
+        "examples": [mlflow_example],
+        "version": "v1",
+        "model": "gateway:/gpt-3.5-turbo",
+        "grading_context_columns": ["targets"],
+        "include_input": True,
+        "parameters": {"temperature": 0.0},
+        "aggregations": ["mean", "variance", "p90"],
+        "greater_is_better": True,
+        "max_workers": 10,
+        "metric_metadata": None,
+        "mlflow_version": VERSION,
+    }
+
+    assert custom_metric.genai_metric_args == expected_genai_metric_args

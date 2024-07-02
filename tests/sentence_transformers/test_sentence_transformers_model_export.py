@@ -18,7 +18,7 @@ import mlflow.sentence_transformers
 from mlflow import pyfunc
 from mlflow.exceptions import MlflowException
 from mlflow.models import Model, infer_signature
-from mlflow.models.utils import _read_example
+from mlflow.models.utils import _get_mlflow_model_input_example_dict, _read_example
 from mlflow.store.artifact.s3_artifact_repo import S3ArtifactRepository
 from mlflow.utils.environment import _mlflow_conda_env
 
@@ -43,7 +43,7 @@ def basic_model():
 
 @pytest.fixture
 def model_with_remote_code():
-    return SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True)
+    return SentenceTransformer("Alibaba-NLP/gte-base-en-v1.5", trust_remote_code=True)
 
 
 @pytest.fixture(scope="module")
@@ -68,8 +68,9 @@ def test_model_save_and_load(model_path, basic_model):
 
 
 @pytest.mark.skipif(
-    Version(sentence_transformers.__version__) < Version("2.3.0"),
-    reason="`trust_remote_code` is not supported in Sentence Transformers < 2.3.0",
+    Version(sentence_transformers.__version__) < Version("2.4.0"),
+    reason="`trust_remote_code` is not supported in Sentence Transformers < 2.3.0 "
+    "and `include_prompt` from gte-base-en-v1.5 requires 2.4.0 or above",
 )
 def test_model_save_and_load_with_custom_code(model_path, model_with_remote_code):
     mlflow.sentence_transformers.save_model(model=model_with_remote_code, path=model_path)
@@ -487,19 +488,24 @@ SIGNATURE_FROM_EXAMPLE = infer_signature(
 
 
 @pytest.mark.parametrize(
-    ("example", "signature", "expected_signature"),
+    ("example", "signature", "expected_signature", "example_no_conversion"),
     [
-        (None, None, mlflow.sentence_transformers._get_default_signature()),
-        (SENTENCES_DF, None, SIGNATURE_FROM_EXAMPLE),
-        (None, SIGNATURE, SIGNATURE),
-        (SENTENCES, SIGNATURE, SIGNATURE),
+        (None, None, mlflow.sentence_transformers._get_default_signature(), False),
+        (SENTENCES_DF, None, SIGNATURE_FROM_EXAMPLE, False),
+        (None, SIGNATURE, SIGNATURE, False),
+        (SENTENCES, SIGNATURE, SIGNATURE, False),
+        (SENTENCES, SIGNATURE, SIGNATURE, True),
     ],
 )
 def test_signature_and_examples_are_saved_correctly(
-    example, signature, expected_signature, basic_model, model_path
+    example, signature, expected_signature, basic_model, model_path, example_no_conversion
 ):
     mlflow.sentence_transformers.save_model(
-        basic_model, path=model_path, signature=signature, input_example=example
+        basic_model,
+        path=model_path,
+        signature=signature,
+        input_example=example,
+        example_no_conversion=example_no_conversion,
     )
     mlflow_model = Model.load(model_path)
 
@@ -508,7 +514,11 @@ def test_signature_and_examples_are_saved_correctly(
     if example is None:
         assert mlflow_model.saved_input_example_info is None
     else:
-        if isinstance(example, pd.DataFrame):
+        if example_no_conversion:
+            assert mlflow_model.saved_input_example_info["type"] == "json_object"
+            saved_example = _get_mlflow_model_input_example_dict(mlflow_model, model_path)
+            assert saved_example == example
+        elif isinstance(example, pd.DataFrame):
             pd.testing.assert_frame_equal(_read_example(mlflow_model, model_path), example)
         else:
             np.testing.assert_equal(_read_example(mlflow_model, model_path), example)
